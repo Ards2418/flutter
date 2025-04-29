@@ -4,17 +4,26 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart'; //firebase realtime database connection
-//import 'package:audioplayers/audioplayers.dart';
-//import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Added for Shared Preferences
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:overlay_support/overlay_support.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:geocoding/geocoding.dart';
+import 'dart:async';
+
+// Firebase connection details
+const String firebaseHost =
+    "riskband-7551a-default-rtdb.asia-southeast1.firebasedatabase.app";
+const String firebaseAuth = "fJ0y6TGCa730ewDi3ols8we5DWWGZjHMeeodcOQF";
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  FirebaseMessaging messaging = FirebaseMessaging.instance;
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Request permission (Required for iOS notifications)
+  // Notification permission setup
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
   NotificationSettings settings = await messaging.requestPermission(
     alert: true,
     badge: true,
@@ -26,31 +35,195 @@ void main() async {
   } else {
     print('User denied permission');
   }
-  testDatabase();
-  runApp(MyApp());
-}
-//used for testing. Buburahin to ha
-void testDatabase() {
-  DatabaseReference ref = FirebaseDatabase.instance.ref("testdata");
 
-  ref.set({
-    "status": "awlekfjal",
-    "timestamp": DateTime.now().toString()
-  }).then((_) {
-    // Use a logging framework instead of print
-    print("Data successfully written to Firebase!");
-  }).catchError((error) {
-    print("Error writing to Firebase: $error");
+  // Notification initialization
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) {
+      if (response.payload == 'emergency_alert') {
+        // Extract data from the payload if needed
+        // Navigate to the emergency alert screen or show the alert dialog
+        // You may need to pass the heart rate, spo2, etc. from the payload
+        _showEmergencyAlert(
+          navigatorKey.currentContext!,
+          int.parse(response.payload?.split(',')[0] ?? '0'), // heartRate
+          int.parse(response.payload?.split(',')[1] ?? '0'), // spo2
+          double.parse(response.payload?.split(',')[2] ?? '0.0'), // latitude
+          double.parse(response.payload?.split(',')[3] ?? '0.0'), // longitude
+        );
+      }
+    },
+  );
+
+  // Load shared preferences
+  SharedPreferences prefs = await SharedPreferences.getInstance();
+  String? userType = prefs.getString('userType');
+  String? relativeName = prefs.getString('relativeName');
+  String? patientName = prefs.getString('patientName');
+  String? contact = prefs.getString('contact');
+
+  // Start app with overlay support
+  runApp(
+    OverlaySupport.global(
+      child: MyApp(
+        userType: userType,
+        relativeName: relativeName,
+        patientName: patientName,
+        contact: contact,
+        navigatorKey: navigatorKey, // Pass this to MyApp
+      ),
+    ),
+  );
+}
+
+void setupHealthDataListener(Function(Map<String, dynamic>) onDataReceived) {
+  Query refHealth = FirebaseDatabase.instance.ref("health_data").limitToLast(1);
+
+  // Optional: Keep the listener synced for better reliability
+  refHealth.keepSynced(true);
+
+  refHealth.onValue.listen((DatabaseEvent event) {
+    final dataSnapshot = event.snapshot;
+
+    if (dataSnapshot.exists && dataSnapshot.value != null) {
+      Map<dynamic, dynamic> healthData =
+          dataSnapshot.value as Map<dynamic, dynamic>;
+      Map<String, dynamic> latestEntry = {};
+
+      // Safely extract the only/latest item
+      healthData.forEach((key, value) {
+        latestEntry = Map<String, dynamic>.from(value);
+      });
+
+      onDataReceived({
+        'heartRate': int.tryParse(latestEntry['heart_rate'].toString()) ?? 0,
+        'spo2': int.tryParse(latestEntry['spo2'].toString()) ?? 0,
+        'latitude': double.tryParse(latestEntry['latitude'].toString()) ?? 0.0,
+        'longitude':
+            double.tryParse(latestEntry['longitude'].toString()) ?? 0.0,
+        // Future-proof:
+        // 'battery': int.tryParse(latestEntry['battery'].toString()) ?? 0,
+        // 'location': latestEntry['location']?.toString() ?? "Location not available",
+      });
+    } else {
+      print("No data found at the specified reference for health data.");
+      onDataReceived({
+        'heartRate': 0,
+        'spo2': 0,
+        'latitude': 0.0,
+        'longitude': 0.0,
+      });
+    }
   });
 }
-// hanggang dito, thanks!
+
+void initializeNotifications() {
+  final AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+
+  flutterLocalNotificationsPlugin.initialize(initializationSettings);
+}
+
+/*
+void setupHealthDataListener(Function(Map<String, dynamic>) onDataReceived) {
+  Query refHealth = FirebaseDatabase.instance.ref("health_data").limitToLast(1);
+
+  // Optional: Keep the listener synced for better reliability
+  refHealth.keepSynced(true);
+
+  refHealth.onValue.listen((DatabaseEvent event) {
+    final dataSnapshot = event.snapshot;
+
+    if (dataSnapshot.exists && dataSnapshot.value != null) {
+      Map<dynamic, dynamic> healthData =
+          dataSnapshot.value as Map<dynamic, dynamic>;
+      Map<String, dynamic> latestEntry = {};
+
+      // Safely extract the only/latest item
+      healthData.forEach((key, value) {
+        latestEntry = Map<String, dynamic>.from(value);
+      });
+
+      onDataReceived({
+        'heartRate': int.tryParse(latestEntry['heart_rate'].toString()) ?? 0,
+        'spo2': int.tryParse(latestEntry['spo2'].toString()) ?? 0,
+        'latitude': double.tryParse(latestEntry['latitude'].toString()) ?? 0.0,
+        'longitude':
+            double.tryParse(latestEntry['longitude'].toString()) ?? 0.0,
+        // Future-proof:
+        // 'battery': int.tryParse(latestEntry['battery'].toString()) ?? 0,
+        // 'location': latestEntry['location']?.toString() ?? "Location not available",
+      });
+    } else {
+      print("No data found at the specified reference for health data.");
+      onDataReceived({
+        'heartRate': 0,
+        'spo2': 0,
+        'latitude': 0.0,
+        'longitude': 0.0,
+      });
+    }
+  });
+}*/
+
 class MyApp extends StatelessWidget {
+  final String? userType;
+  final String? relativeName;
+  final String? patientName;
+  final String? contact;
+  final GlobalKey<NavigatorState> navigatorKey;
+
+  const MyApp({
+    super.key,
+    this.userType,
+    this.relativeName,
+    this.patientName,
+    this.contact,
+    required this.navigatorKey,
+  });
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'Health App Interface',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: HomePage(),
+      home:
+          (userType == 'relative' &&
+                  relativeName != null &&
+                  patientName != null &&
+                  contact != null)
+              ? RelativeMonitoringScreen(
+                relativeName: relativeName!,
+                patientName: patientName!,
+                contact: contact!,
+              )
+              : (userType == 'patient' &&
+                  patientName != null &&
+                  relativeName != null &&
+                  contact != null)
+              ? PatientMonitoringScreen(
+                patientName: patientName!,
+                relativeName: relativeName!,
+                relativeContact: contact!,
+              )
+              : HomePage(),
+      navigatorKey: navigatorKey,
+      routes: {
+        '/relative': (context) => RelativeScreen(),
+        '/patient': (context) => PatientScreen(),
+      },
     );
   }
 }
@@ -71,11 +244,7 @@ class HomePage extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.network(
-                'https://scontent.fmnl9-6.fna.fbcdn.net/v/t1.15752-9/482682648_657925713292190_7421764742685231718_n.png?_nc_cat=103&ccb=1-7&_nc_sid=0024fc&_nc_eui2=AeEZjPtJ0ot5RJHDuqilZFOlSkqvNLhfT1BKSq80uF9PUGkFRCoWvrTadlyxPm4C3ozhxWnyTlDp_b14PMUoi8j0&_nc_ohc=QwM7PVUawgoQ7kNvgEQMxLk&_nc_oc=AdhZH5KJOLdKmlWDeZHofC3x98xYT1w2qeQinRoLS49wHE0cEIlpM3L0lqoRwAoJBT4&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent.fmnl9-6.fna&oh=03_Q7cD1wG1f9ZyfIPtGvdZJUoBulylvWGFTLdagogWZmajIx05eg&oe=67F9D52A',
-                height: 100,
-                width: 100,
-              ),
+              Image.asset('assets/logo.jpg', height: 100, width: 100),
               SizedBox(height: 20),
               ElevatedButton(
                 onPressed: () {
@@ -120,8 +289,7 @@ class HomePage extends StatelessWidget {
   }
 }
 
-
-// relatvie login screen
+// Relative login screen
 class RelativeScreen extends StatefulWidget {
   @override
   _RelativeScreenState createState() => _RelativeScreenState();
@@ -139,13 +307,19 @@ class _RelativeScreenState extends State<RelativeScreen> {
 
   void validateAndSave() {
     setState(() {
-      nameError = nameController.text.isEmpty ? "Please fill up the text field" : null;
-      patientNameError = patientNameController.text.isEmpty ? "Please fill up the text field" : null;
-      contactError = contactController.text.isEmpty ? "Please fill up the text field" : null;
+      nameError =
+          nameController.text.isEmpty ? "Please fill up the text field" : null;
+      patientNameError =
+          patientNameController.text.isEmpty
+              ? "Please fill up the text field"
+              : null;
+      contactError =
+          contactController.text.isEmpty
+              ? "Please fill up the text field"
+              : null;
     });
 
     if (nameError != null || patientNameError != null || contactError != null) {
-      // Show Snackbar if any field is empty
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Please fill up all the text fields"),
@@ -153,11 +327,10 @@ class _RelativeScreenState extends State<RelativeScreen> {
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if there are errors
+      return;
     }
 
-    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(nameController.text.trim()) || nameController.text.trim().isEmpty) {
-      // Show Snackbar if name contains special characters, numbers, or is only spaces
+    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(nameController.text.trim())) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Please avoid special characters and numbers."),
@@ -165,11 +338,10 @@ class _RelativeScreenState extends State<RelativeScreen> {
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if name is invalid
+      return;
     }
 
-    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(patientNameController.text.trim()) || patientNameController.text.trim().isEmpty) {
-      // Show Snackbar if patient name contains special characters, numbers, or is only spaces
+    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(patientNameController.text.trim())) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Please avoid special characters and numbers."),
@@ -177,50 +349,52 @@ class _RelativeScreenState extends State<RelativeScreen> {
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if patient name is invalid
+      return;
     }
 
-    if (contactController.text.length != 11 || !RegExp(r'^[0-9]+$').hasMatch(contactController.text)) {
-      // Show Snackbar if contact is not 11 digits or contains non-numeric characters
+    if (contactController.text.length != 11 ||
+        !RegExp(r'^[0-9]+$').hasMatch(contactController.text)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Contact number must be 11 digits and contain only numbers"),
+          content: Text(
+            "Contact number must be 11 digits and contain only numbers",
+          ),
           backgroundColor: Colors.red,
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if contact number is invalid
+      return;
     }
 
-    // Capitalize the first letter of each word in the name and patient name
-    String capitalize(String s) => s.split(' ').map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase()).join(' ');
+    String capitalize(String s) => s
+        .split(' ')
+        .map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase())
+        .join(' ');
     String relativeName = capitalize(nameController.text.trim());
     String patientName = capitalize(patientNameController.text.trim());
 
-    // Define the variables for heart rate, spo2, and battery
-    int heartRate = 0; // Replace with actual value
-    int spo2 = 0; // Replace with actual value
-    int battery = 0; // Replace with actual value
-
-    // If all fields are filled, proceed
     setState(() {
       isSignedUp = true;
     });
 
-    // Navigate to the monitoring screen and prevent going back
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString('userType', 'relative');
+      prefs.setString('relativeName', relativeName);
+      prefs.setString('patientName', patientName);
+      prefs.setString('contact', contactController.text);
+    });
+
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
-        builder: (context) => RelativeMonitoringScreen(
-          relativeName: relativeName,
-          patientName: patientName,
-          contact: contactController.text,
-          heartRate: heartRate, // Retrieved value
-          spo2: spo2, // Retrieved value
-          battery: battery, // Retrieved value
-        ),
+        builder:
+            (context) => RelativeMonitoringScreen(
+              relativeName: relativeName,
+              patientName: patientName,
+              contact: contactController.text,
+            ),
       ),
-          (Route<dynamic> route) => false,
+      (Route<dynamic> route) => false,
     );
   }
 
@@ -254,7 +428,7 @@ class _RelativeScreenState extends State<RelativeScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(),
-                    errorText: nameError, // Shows error if field is empty
+                    errorText: nameError,
                   ),
                 ),
                 SizedBox(height: 10),
@@ -265,7 +439,7 @@ class _RelativeScreenState extends State<RelativeScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(),
-                    errorText: patientNameError, // Shows error if field is empty
+                    errorText: patientNameError,
                   ),
                 ),
                 SizedBox(height: 10),
@@ -276,7 +450,7 @@ class _RelativeScreenState extends State<RelativeScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(),
-                    errorText: contactError, // Shows error if field is empty
+                    errorText: contactError,
                   ),
                   keyboardType: TextInputType.phone,
                 ),
@@ -286,7 +460,11 @@ class _RelativeScreenState extends State<RelativeScreen> {
                   padding: EdgeInsets.all(6.0),
                   child: Text(
                     "Reminder: \n     Please double-check your information before saving.",
-                    style: TextStyle(fontSize: 12, color: Colors.black, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 SizedBox(height: 20),
@@ -310,24 +488,51 @@ class _RelativeScreenState extends State<RelativeScreen> {
   }
 }
 
-//relative monitoring screen
-class RelativeMonitoringScreen extends StatelessWidget {
+// Relative monitoring screen
+class RelativeMonitoringScreen extends StatefulWidget {
   final String relativeName;
   final String patientName;
   final String contact;
-  final int heartRate;
-  final int spo2;
-  final int battery;
-  final String location = " "; // Define the location variable
 
   RelativeMonitoringScreen({
     required this.relativeName,
     required this.patientName,
     required this.contact,
-    required this.heartRate,
-    required this.spo2,
-    required this.battery,
   });
+
+  @override
+  _RelativeMonitoringScreenState createState() =>
+      _RelativeMonitoringScreenState();
+}
+
+class _RelativeMonitoringScreenState extends State<RelativeMonitoringScreen> {
+  int heartRate = 0; // Initialize with default value
+  int spo2 = 0; // Initialize with default value
+  double latitude = 0.0; // Initialize with default value
+  double longitude = 0.0; // Initialize with default value // Add longitude
+  //late int battery; TO BE ADDED
+  //late String location;
+
+  @override
+  void initState() {
+    super.initState();
+    setupHealthDataListener((data) {
+      setState(() {
+        heartRate = data['heartRate'];
+        spo2 = data['spo2'];
+        latitude = data['latitude'];
+        longitude = data['longitude'];
+      });
+
+      handleSensorData(
+        context,
+        data['heartRate'],
+        data['spo2'],
+        data['latitude'],
+        data['longitude'],
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -346,8 +551,8 @@ class RelativeMonitoringScreen extends StatelessWidget {
             Align(
               alignment: Alignment.topRight,
               child: Padding(
-              padding: EdgeInsets.all(10),
-              child: Text("Battery: $battery%", style: TextStyle(fontSize: 20)),
+                padding: EdgeInsets.all(10),
+                //child: Text("Battery: $battery%", style: TextStyle(fontSize: 20)), TO BE ADDED
               ),
             ),
             Center(
@@ -362,7 +567,9 @@ class RelativeMonitoringScreen extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          heartRate > 0 ? "$heartRate ❤️" : "No Heart Rate Data",
+                          heartRate > 0
+                              ? "$heartRate ❤️"
+                              : "No Heart Rate Data",
                           style: TextStyle(
                             color: Colors.red,
                             fontSize: 50,
@@ -376,66 +583,105 @@ class RelativeMonitoringScreen extends StatelessWidget {
                       ],
                     ),
                   ),
+                  SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      FloatingActionButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => HotlineScreen(),
+                            ),
+                          );
+                        },
+                        backgroundColor: Colors.black,
+                        child: Icon(Icons.phone, color: Colors.white),
+                      ),
+                      SizedBox(width: 20),
+                      FloatingActionButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => FirstAidScreen(),
+                            ),
+                          );
+                        },
+                        backgroundColor: Colors.black,
+                        child: Icon(
+                          Icons.medical_services,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  // original code
+
+                  //POPUP ALERT
+                  /*SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: () {
+                      _showEmergencyAlert(
+                        context,
+                        heartRate,
+                        spo2,
+                        latitude,
+                        longitude,
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: Text("Emergency Alert"),
+                  ),*/
+                  SizedBox(height: 30),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.person, color: Colors.black, size: 30),
+                      SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "RELATIVE",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text("Name: ${widget.relativeName}"),
+                          Text("Name of Patient: ${widget.patientName}"),
+                          Text("Contact: ${widget.contact}"),
+                        ],
+                      ),
+                    ],
+                  ),
+                  /*Align(
+                    alignment: Alignment.bottomRight,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        SharedPreferences prefs =
+                            await SharedPreferences.getInstance();
+                        await prefs.clear();
+                        Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(builder: (context) => HomePage()),
+                          (Route<dynamic> route) => false,
+                        );
+                      },
+                      child: Text("Logout"),
+                    ),
+                  ),*/
                 ],
               ),
-            ),
-            SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                FloatingActionButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => HotlineScreen()),
-                    );
-                  },
-                  backgroundColor: Colors.black,
-                  child: Icon(Icons.phone, color: Colors.white),
-                ),
-                SizedBox(width: 20),
-                FloatingActionButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => FirstAidScreen()),
-                    );
-                  },
-                  backgroundColor: Colors.black,
-                  child: Icon(Icons.medical_services, color: Colors.white),
-                ),
-              ],
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-                onPressed: () {
-                _showEmergencyAlert(context, heartRate, spo2, location);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Text("Emergency Alert"),
-            ),
-            SizedBox(height: 30),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.person, color: Colors.black, size: 30),
-                SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("RELATIVE", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    Text("Name: $relativeName"),
-                    Text("Name of Patient: $patientName"),
-                    Text("Contact: $contact"),
-                  ],
-                ),
-              ],
             ),
           ],
         ),
@@ -443,6 +689,8 @@ class RelativeMonitoringScreen extends StatelessWidget {
     );
   }
 }
+
+// First Aid Screen on relative
 class FirstAidScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -450,16 +698,14 @@ class FirstAidScreen extends StatelessWidget {
       appBar: AppBar(title: Text("First Aid Guide")),
       body: SingleChildScrollView(
         child: Center(
-          child: Image.network(
-            'https://scontent.fmnl17-1.fna.fbcdn.net/v/t1.15752-9/483121034_1843439886424615_5430622793697211745_n.png?stp=dst-png_p480x480&_nc_cat=100&ccb=1-7&_nc_sid=0024fc&_nc_eui2=AeEpoWYm91YO3hmrEfZ8MMnGPCe44MlGV588J7jgyUZXnxezzxu9IE7yBkTCBHHm4vWYjZL1atvpCw8YuO_xaGxj&_nc_ohc=_jXAMl4eITwQ7kNvgFrIRzq&_nc_oc=AdjRiURymWFirW9bv67EW_pP9P15k1u1_YcMfaHX61rPTNFLsr5iRO9kg7pnu46OS8c&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent.fmnl17-1.fna&oh=03_Q7cD1wGVN5Fpp5uAZouTfqs5qSReW69DEpTuFBPq_qKMx_E_yw&oe=67FC6FDC',
-            fit: BoxFit.contain,
-          ),
+          child: Image.asset('assets/firstaid.jpg', fit: BoxFit.contain),
         ),
       ),
     );
   }
 }
 
+// Patient sign-up screen
 class PatientScreen extends StatefulWidget {
   @override
   _PatientScreenState createState() => _PatientScreenState();
@@ -468,7 +714,8 @@ class PatientScreen extends StatefulWidget {
 class _PatientScreenState extends State<PatientScreen> {
   final TextEditingController nameController = TextEditingController();
   final TextEditingController relativeNameController = TextEditingController();
-  final TextEditingController relativeContactController = TextEditingController();
+  final TextEditingController relativeContactController =
+      TextEditingController();
 
   bool isSignedUp = false;
   String? nameError;
@@ -477,13 +724,21 @@ class _PatientScreenState extends State<PatientScreen> {
 
   void validateAndSave() {
     setState(() {
-      nameError = nameController.text.isEmpty ? "Please fill up the text field" : null;
-      relativeNameError = relativeNameController.text.isEmpty ? "Please fill up the text field" : null;
-      relativeContactError = relativeContactController.text.isEmpty ? "Please fill up the text field" : null;
+      nameError =
+          nameController.text.isEmpty ? "Please fill up the text field" : null;
+      relativeNameError =
+          relativeNameController.text.isEmpty
+              ? "Please fill up the text field"
+              : null;
+      relativeContactError =
+          relativeContactController.text.isEmpty
+              ? "Please fill up the text field"
+              : null;
     });
 
-    if (nameError != null || relativeNameError != null || relativeContactError != null) {
-      // Show Snackbar if any field is empty
+    if (nameError != null ||
+        relativeNameError != null ||
+        relativeContactError != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Please fill up all the text fields"),
@@ -491,11 +746,10 @@ class _PatientScreenState extends State<PatientScreen> {
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if there are errors
+      return;
     }
 
-    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(nameController.text.trim()) || nameController.text.trim().isEmpty) {
-      // Show Snackbar if name contains special characters, numbers, or is only spaces
+    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(nameController.text.trim())) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Please avoid special characters and numbers."),
@@ -503,11 +757,12 @@ class _PatientScreenState extends State<PatientScreen> {
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if name is invalid
+      return;
     }
 
-    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(relativeNameController.text.trim()) || relativeNameController.text.trim().isEmpty) {
-      // Show Snackbar if relative name contains special characters, numbers, or is only spaces
+    if (!RegExp(
+      r'^[a-zA-Z\s]+$',
+    ).hasMatch(relativeNameController.text.trim())) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Please avoid special characters and numbers."),
@@ -515,49 +770,52 @@ class _PatientScreenState extends State<PatientScreen> {
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if relative name is invalid
+      return;
     }
 
-    if (relativeContactController.text.length != 11 || !RegExp(r'^[0-9]+$').hasMatch(relativeContactController.text)) {
-      // Show Snackbar if contact is not 11 digits or contains non-numeric characters
+    if (relativeContactController.text.length != 11 ||
+        !RegExp(r'^[0-9]+$').hasMatch(relativeContactController.text)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Contact number must be 11 digits and contain only numbers"),
+          content: Text(
+            "Contact number must be 11 digits and contain only numbers",
+          ),
           backgroundColor: Colors.red,
           duration: Duration(seconds: 5),
         ),
       );
-      return; // Stop execution if contact number is invalid
+      return;
     }
 
-    // Capitalize the first letter of each word in the name and relative name
-    String capitalize(String s) => s.split(' ').map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase()).join(' ');
+    String capitalize(String s) => s
+        .split(' ')
+        .map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase())
+        .join(' ');
     String patientName = capitalize(nameController.text.trim());
     String relativeName = capitalize(relativeNameController.text.trim());
 
-    int heartRate = 0; // Replace with actual value
-    int spo2 = 0; // Replace with actual value
-    int battery = 0; 
-
-    // If all fields are filled, proceed
     setState(() {
       isSignedUp = true;
     });
 
-    // Navigate to the monitoring screen and prevent going back
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString('userType', 'patient');
+      prefs.setString('relativeName', relativeName);
+      prefs.setString('patientName', patientName);
+      prefs.setString('contact', relativeContactController.text);
+    });
+
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
-        builder: (context) => PatientMonitoringScreen(
-          relativeName: relativeName,
-          patientName: patientName,
-          relativeContact: relativeContactController.text,
-          heartRate: 0, // Add appropriate value
-          spo2: 0, // Add appropriate value
-          battery: 0, // Add appropriate value
-        ),
+        builder:
+            (context) => PatientMonitoringScreen(
+              patientName: patientName,
+              relativeName: relativeName,
+              relativeContact: relativeContactController.text,
+            ),
       ),
-          (Route<dynamic> route) => false,
+      (Route<dynamic> route) => false,
     );
   }
 
@@ -591,7 +849,7 @@ class _PatientScreenState extends State<PatientScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(),
-                    errorText: nameError, // Shows error if field is empty
+                    errorText: nameError,
                   ),
                 ),
                 SizedBox(height: 10),
@@ -602,7 +860,7 @@ class _PatientScreenState extends State<PatientScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(),
-                    errorText: relativeNameError, // Shows error if field is empty
+                    errorText: relativeNameError,
                   ),
                 ),
                 SizedBox(height: 10),
@@ -613,7 +871,7 @@ class _PatientScreenState extends State<PatientScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(),
-                    errorText: relativeContactError, // Shows error if field is empty
+                    errorText: relativeContactError,
                   ),
                   keyboardType: TextInputType.phone,
                 ),
@@ -623,7 +881,11 @@ class _PatientScreenState extends State<PatientScreen> {
                   padding: EdgeInsets.all(6.0),
                   child: Text(
                     "Reminder: \n     Please double-check your information before saving.",
-                    style: TextStyle(fontSize: 12, color: Colors.black, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 SizedBox(height: 20),
@@ -647,22 +909,43 @@ class _PatientScreenState extends State<PatientScreen> {
   }
 }
 
-class PatientMonitoringScreen extends StatelessWidget {
+// Patient monitoring screen
+class PatientMonitoringScreen extends StatefulWidget {
   final String patientName;
   final String relativeName;
   final String relativeContact;
-  final int heartRate;
-  final int spo2;
-  final int battery;
 
   PatientMonitoringScreen({
     required this.patientName,
     required this.relativeName,
     required this.relativeContact,
-    required this.heartRate,
-    required this.spo2,
-    required this.battery,
   });
+
+  @override
+  _PatientMonitoringScreenState createState() =>
+      _PatientMonitoringScreenState();
+}
+
+class _PatientMonitoringScreenState extends State<PatientMonitoringScreen> {
+  int heartRate = 0; // Initialize with default value
+  int spo2 = 0; // Initialize with default value
+  double latitude = 0.0; // Initialize with default value
+  double longitude = 0.0; // Initialize with default value
+  //late int battery; // TO BE ADDED
+  //late String location;
+
+  @override
+  void initState() {
+    super.initState();
+    setupHealthDataListener((data) {
+      setState(() {
+        heartRate = data['heartRate'];
+        spo2 = data['spo2'];
+        latitude = data['latitude'];
+        longitude = data['longitude'];
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -681,8 +964,8 @@ class PatientMonitoringScreen extends StatelessWidget {
             Align(
               alignment: Alignment.topRight,
               child: Padding(
-              padding: EdgeInsets.all(10),
-              child: Text("Battery: $battery%", style: TextStyle(fontSize: 20)),
+                padding: EdgeInsets.all(10),
+                //child: Text("Battery: $battery%", style: TextStyle(fontSize: 20)), // TO BE ADDED
               ),
             ),
             Center(
@@ -697,30 +980,30 @@ class PatientMonitoringScreen extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          "Current",
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
-                        Text(
-                          heartRate != null && heartRate > 0 ? "$heartRate ❤️" : "No Heart Rate Data",
+                          heartRate > 0
+                              ? "$heartRate ❤️"
+                              : "No Heart Rate Data",
                           style: TextStyle(
-                          color: Colors.red,
-                          fontSize: 50,
-                          fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                            fontSize: 50,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
-                          spo2 != null && spo2 > 0 ? "$spo2% SpO2" : "No SpO2 Data",
+                          spo2 > 0 ? "$spo2% SpO2" : "No SpO2 Data",
                           style: TextStyle(color: Colors.white, fontSize: 16),
                         ),
-                        ],
-                      ),
-                      ),
+                      ],
+                    ),
+                  ),
                   SizedBox(height: 20),
                   FloatingActionButton(
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (context) => HotlineScreen()),
+                        MaterialPageRoute(
+                          builder: (context) => HotlineScreen(),
+                        ),
                       );
                     },
                     backgroundColor: Colors.black,
@@ -735,14 +1018,38 @@ class PatientMonitoringScreen extends StatelessWidget {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text("PATIENT", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text("Name: $patientName"),
-                          Text("Name of Relative: $relativeName"),
-                          Text("Contact of Relative: $relativeContact"),
+                          Text(
+                            "PATIENT",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text("Name: ${widget.patientName}"),
+                          Text("Name of Relative: ${widget.relativeName}"),
+                          Text(
+                            "Contact of Relative: ${widget.relativeContact}",
+                          ),
                         ],
                       ),
                     ],
                   ),
+                  /*Align(
+                    alignment: Alignment.bottomRight,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        SharedPreferences prefs =
+                            await SharedPreferences.getInstance();
+                        await prefs.clear();
+                        Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(builder: (context) => HomePage()),
+                          (Route<dynamic> route) => false,
+                        );
+                      },
+                      child: Text("Logout"),
+                    ),
+                  ),*/
                 ],
               ),
             ),
@@ -752,131 +1059,113 @@ class PatientMonitoringScreen extends StatelessWidget {
     );
   }
 }
-class HotlineScreen extends StatelessWidget {
-  final List<String> hotlines = [
-    "911",
-    "112",
-    "999",
-    "123-456-7890" // Example number
-  ];
 
+// Emergency hotline screen
+class HotlineScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text("Emergency Hotlines")),
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFFFCC33), Color(0xFF6699CC)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: Center(
-          child: Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  "SOS",
-                  style: TextStyle(
-                    fontSize: 80,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red,
-                  ),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  "Emergency Hotlines:",
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: 10),
-                Column(
-                  children: hotlines.map((number) {
-                    return Text(
-                      number,
-                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-                    );
-                  }).toList(),
-                ),
-                SizedBox(height: 20),
-              ],
-            ),
-          ),
-        ),
+        width: double.infinity,
+        height: double.infinity,
+        child: Image.asset('assets/hotline.jpg', fit: BoxFit.cover),
       ),
     );
   }
 }
 
-class EmergencyScreen extends StatefulWidget {
-  @override
-  _EmergencyScreenState createState() => _EmergencyScreenState();
+// Function to play audio from URL
+void playAudioFromUrl(AudioPlayer player) async {
+  await player.play(AssetSource('alert_sound.mp3'));
 }
 
-class _EmergencyScreenState extends State<EmergencyScreen> {
-  final DatabaseReference databaseRef = FirebaseDatabase.instance.ref("emergency");
-
-  int heartRate = 0;
-  int spo2 = 0;
-  String location = "0,0";
-  int battery = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    fetchEmergencyData();
-  }
-
-  void fetchEmergencyData() {
-    databaseRef.onValue.listen((event) {
-      final data = event.snapshot.value as Map<dynamic, dynamic>?;
-
-      if (data != null) {
-        setState(() {
-          heartRate = data['heartRate'];
-          spo2 = data['spo2'];
-          location = data['location'];
-          battery = data['battery'];
-        });
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text("Emergency Data")),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text("Heart Rate: $heartRate bpm", style: TextStyle(fontSize: 20)),
-            Text("SpO2: $spo2%", style: TextStyle(fontSize: 20)),
-            Text("Location: $location", style: TextStyle(fontSize: 20)),
-            Text("Battery: $battery%", style: TextStyle(fontSize: 20)),
-          ],
-        ),
-      ),
+Future<String> getAddressFromLatLng(double latitude, double longitude) async {
+  try {
+    List<Placemark> placemarks = await placemarkFromCoordinates(
+      latitude,
+      longitude,
     );
+    Placemark place = placemarks[0]; // Get the first placemark
+    return "${place.street},${place.subLocality}, ${place.locality}, ${place.postalCode}, ${place.country}"; // Format the address
+  } catch (e) {
+    print(e);
+    return "Location not available"; // Return a default message in case of error
   }
 }
 
-void _showEmergencyAlert(BuildContext context, int heartRate, int spo2, String location) {
+bool _alertActive = false;
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+AudioPlayer _player =
+    AudioPlayer(); // Declare and initialize a single instance of AudioPlayer
+
+Future<void> _showEmergencyAlert(
+  BuildContext context,
+  int heartRate,
+  int spo2,
+  double latitude,
+  double longitude,
+) async {
+  String address = await getAddressFromLatLng(latitude, longitude);
+
+  // Sound + vibration while in foreground
+  if (context.mounted) {
+    _player.setReleaseMode(ReleaseMode.loop);
+    playAudioFromUrl(_player);
+    Vibration.vibrate(pattern: [500, 1000, 500, 1000], repeat: 0);
+  }
+
+  // Full-screen modal alert
   showDialog(
     context: context,
     barrierDismissible: false,
     builder: (BuildContext context) {
-      Vibration.vibrate(pattern: [500, 1000, 500, 1000], repeat: 0);
       return AlertDialog(
-        title: Text("Emergency Alert!", style: TextStyle(color: Colors.red, fontSize: 24)),
-        content: Text("Patient's heart rate has risen to $heartRate BPM and $spo2 oxygen level. Possible heart attack detected! Patient's location: $location", style: TextStyle(fontSize: 18)),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            SizedBox(width: 8),
+            Text(
+              "🚨 Emergency Alert",
+              style: TextStyle(
+                color: Colors.red[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("❤️ Heart Rate: $heartRate BPM"),
+            Text("🩸 SpO₂ Level: $spo2%"),
+            SizedBox(height: 10),
+            Text("📍 Location: $address"),
+            Text("Latitude: $latitude"),
+            Text("Longitude: $longitude"),
+            SizedBox(height: 10),
+            Text(
+              "⚠️ Possible heart issue detected.",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () {
               Vibration.cancel();
+              _player.stop();
               Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text("Emergency alert acknowledged."),
+                  backgroundColor: Colors.redAccent,
+                ),
+              );
             },
             child: Text("Confirm"),
           ),
@@ -884,4 +1173,57 @@ void _showEmergencyAlert(BuildContext context, int heartRate, int spo2, String l
       );
     },
   );
+
+  // Full-screen push notification (background/locked state)
+  await showEmergencyNotification(heartRate, spo2, address);
+}
+
+Future<void> showEmergencyNotification(
+  int heartRate,
+  int spo2,
+  String address,
+) async {
+  final androidDetails = AndroidNotificationDetails(
+    'emergency_channel_id',
+    'Emergency Alerts',
+    channelDescription: 'Channel for full-screen emergency alerts',
+    importance: Importance.max,
+    priority: Priority.high,
+    fullScreenIntent: true,
+    styleInformation: BigTextStyleInformation(
+      '❤️ $heartRate BPM • 🩸 $spo2%\n📍 $address',
+      contentTitle: '🚨 Emergency Alert!',
+      summaryText: 'Emergency data received',
+    ),
+    ticker: 'emergency',
+    icon: '@mipmap/ic_launcher',
+    color: Colors.red,
+  );
+
+  final platformChannelSpecifics = NotificationDetails(android: androidDetails);
+
+  await flutterLocalNotificationsPlugin.show(
+    0,
+    '🚨 Emergency Alert!',
+    '❤️ $heartRate BPM • 🩸 $spo2% • 📍 Tap for location',
+    platformChannelSpecifics,
+    payload: 'emergency_alert', // Used for navigation when tapped
+  );
+}
+
+void handleSensorData(
+  BuildContext context,
+  int heartRate,
+  int spo2,
+  double latitude,
+  double longitude,
+) {
+  if (heartRate >= 140 || heartRate <= 50 && !_alertActive) {
+    _alertActive = true;
+    _showEmergencyAlert(context, heartRate, spo2, latitude, longitude);
+
+    Future.delayed(Duration(minutes: 1), () {
+      _alertActive = false;
+    });
+  }
 }
